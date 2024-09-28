@@ -1,7 +1,14 @@
+use std::borrow::Borrow;
+
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DELIMITER: &str = "\r\n";
+
+#[derive(Debug, PartialEq)]
+enum RequestError {
+    InvalidRequest(String),
+}
 
 #[tokio::main]
 async fn main() {
@@ -22,10 +29,10 @@ async fn main() {
                 Ok(n) if n == 0 => return, // connection closed
                 Ok(n) => {
                     // Convert the buffer into a string 
-                    let message: String = String::from_utf8_lossy(&buffer[0..n]).into_owned();
+                    let message = String::from_utf8_lossy(&buffer[0..n]);
                     println!("{}", message);
                     // Process the message
-                    // let response = process_message(message.to_string());
+                    let response = process_message(&message);
                     let _response = "+OK\r\n";
                 
 
@@ -57,12 +64,20 @@ fn base_message(first_char: char, value: &str, delim: &str) -> String {
 // "*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n”
 // "*2\r\n$3\r\nget\r\n$3\r\nkey\r\n”
 
-fn process_message(main_message: String) -> Result<String, String> {
+fn process_message(main_message: &str) -> Result<String, RequestError> {
     if !main_message.starts_with('*') {
-        return Err(error_message("Invalid message format"));
+        return Err(RequestError::InvalidRequest(error_message("Invalid message format")));
     }
+    let split_message = main_message.split(DELIMITER);
 
     Ok(String::from("Test"))
+}
+
+fn split_pair(pair_to_split: &str) {
+    let symbol = pair_to_split.chars().nth(0).unwrap_or_default();
+    let number_to_parse = pair_to_split.get(1..).unwrap();
+
+
 }
 
 #[cfg(test)]
@@ -83,7 +98,7 @@ mod tests {
 
     #[test]
     fn process_message_starts_with_tests() {
-        assert_eq!(process_message("&t".to_string()).err().unwrap(), "-Invalid message format\r\n");
-        assert_eq!(process_message("-t".to_string()).err().unwrap(), "-Invalid message format\r\n");
+        assert_eq!(process_message("&t".to_string()), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
+        assert_eq!(process_message("-t".to_string()), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
     }
 }
