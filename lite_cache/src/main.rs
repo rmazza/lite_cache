@@ -1,5 +1,3 @@
-use std::borrow::Borrow;
-
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -32,8 +30,8 @@ async fn main() {
                     let message = String::from_utf8_lossy(&buffer[0..n]);
                     println!("{}", message);
                     // Process the message
-                    let response = process_message(&message);
-                    let _response = "+OK\r\n";
+                    let _response = process_message(&message);
+                    // let _response = "+OK\r\n";
                 
 
                     if let Err(e) = socket.write_all(&buffer[0..n]).await {
@@ -60,7 +58,9 @@ fn base_message(first_char: char, value: &str, delim: &str) -> String {
     format!("{}{}{}", first_char, value, delim)
 }
 
-
+fn parse_array_length(encoded: &str) -> usize {
+    encoded[1..].parse::<usize>().unwrap_or_default()
+}
 // "*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n”
 // "*2\r\n$3\r\nget\r\n$3\r\nkey\r\n”
 
@@ -68,9 +68,15 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
     if !main_message.starts_with('*') {
         return Err(RequestError::InvalidRequest(error_message("Invalid message format")));
     }
-    let split_message = main_message.split(DELIMITER);
+    let split_message: Vec<&str> = main_message.split(DELIMITER).collect();
 
-    Ok(String::from("Test"))
+    let length =  parse_array_length(split_message.first().unwrap());
+
+    if length != ((split_message.len() - 1) / 2) {
+        return Err(RequestError::InvalidRequest(error_message("Invalid array length")));
+    }
+    
+    Ok(simple_string("OK"))
 }
 
 fn split_pair(pair_to_split: &str) {
@@ -97,8 +103,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_array_length_tests() {
+        assert_eq!(parse_array_length("*4"), 4);
+        assert_eq!(parse_array_length("*15"), 15);
+        assert_eq!(parse_array_length("*100"), 100);
+        assert_eq!(parse_array_length("*-1"), 0);
+    }
+
+    #[test]
     fn process_message_starts_with_tests() {
-        assert_eq!(process_message("&t".to_string()), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
-        assert_eq!(process_message("-t".to_string()), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
+        assert_eq!(process_message("&t"), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
+        assert_eq!(process_message("-t"), Err(RequestError::InvalidRequest("-Invalid message format\r\n".to_string())));
+    }
+
+    #[test]
+    fn process_message_invalid_array_length() {
+        assert_eq!(process_message("*3\r\n$4\r\necho\r\n$11\r\nhello world\r\n"), Err(RequestError::InvalidRequest("-Invalid array length\r\n".to_string())));
+        assert_eq!(process_message("*4\r\n$3\r\nget\r\n$3\r\nkey\r\n"), Err(RequestError::InvalidRequest("-Invalid array length\r\n".to_string())));
+    }
+
+    #[test]
+    fn process_message_test() {
+        assert_eq!(process_message("*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n"), Ok("+OK\r\n".to_string()));
     }
 }
