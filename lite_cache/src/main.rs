@@ -1,13 +1,18 @@
-use std::slice::Iter;
+use std::{slice::Iter, thread};
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 
 const DELIMITER: &str = "\r\n";
 const OK: &str = "OK";
 
+static GLOBAL_MAP: Lazy<DashMap<String, String>> = Lazy::new(DashMap::new);
+
 #[derive(Debug, PartialEq)]
 enum RequestError {
     InvalidRequest(String),
+    KeyNotFound(String),
 }
 
 #[tokio::main]
@@ -87,6 +92,21 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
             let message_to_echo = split_pair( &mut message_iter)?;
             Ok(simple_string(&message_to_echo))
         },
+        "set" => {
+            let key = split_pair(&mut message_iter)?;
+            let value = split_pair(&mut message_iter)?;
+            GLOBAL_MAP.insert(key, value);
+            Ok(simple_string(OK))
+        },
+        "get" => {
+            let key = split_pair(&mut message_iter)?;
+            if let Some(found_value) = GLOBAL_MAP.get(key.as_str()) {
+                Ok(simple_string(&found_value))
+            }
+            else {
+                Err(RequestError::KeyNotFound(error_message(&format!("{} not found", key))))
+            }
+        }
         _ => Err(RequestError::InvalidRequest(error_message(&format!("Command {} not found", command).to_string())))
     }   
 }
@@ -156,5 +176,11 @@ mod tests {
     #[test]
     fn process_message_command_not_found() {
         assert_eq!(process_message("*1\r\n$4\r\nzzzz\r\n"), Err(RequestError::InvalidRequest("-Command zzzz not found\r\n".to_string())))
+    }
+
+    #[test]
+    fn process_message_set_get() {
+        assert_eq!(process_message("*3\r\n$3\r\nset\r\n$7\r\ntestKey\r\n$9\r\ntestValue\r\n"), Ok("+OK\r\n".to_string()));
+        assert_eq!(process_message("*2\r\n$3\r\nget\r\n$7\r\ntestKey\r\n"), Ok("+testValue\r\n".to_string()));
     }
 }
