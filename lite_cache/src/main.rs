@@ -87,7 +87,7 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
             let message_to_echo = split_pair( &mut message_iter)?;
             Ok(simple_string(&message_to_echo))
         },
-        _ => Err(RequestError::InvalidRequest(format!("Command {} not found", command).to_string()))
+        _ => Err(RequestError::InvalidRequest(error_message(&format!("Command {} not found", command).to_string())))
     }   
 }
 
@@ -155,6 +155,6 @@ mod tests {
 
     #[test]
     fn process_message_command_not_found() {
-
+        assert_eq!(process_message("*1\r\n$4\r\nzzzz\r\n"), Err(RequestError::InvalidRequest("-Command zzzz not found\r\n".to_string())))
     }
 }
