@@ -1,7 +1,9 @@
+use std::slice::Iter;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DELIMITER: &str = "\r\n";
+const OK: &str = "OK";
 
 #[derive(Debug, PartialEq)]
 enum RequestError {
@@ -58,7 +60,7 @@ fn base_message(first_char: char, value: &str, delim: &str) -> String {
     format!("{}{}{}", first_char, value, delim)
 }
 
-fn parse_array_length(encoded: &str) -> usize {
+fn parse_length(encoded: &str) -> usize {
     encoded[1..].parse::<usize>().unwrap_or_default()
 }
 // "*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n”
@@ -69,21 +71,34 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
         return Err(RequestError::InvalidRequest(error_message("Invalid message format")));
     }
     let split_message: Vec<&str> = main_message.split(DELIMITER).collect();
-
-    let length =  parse_array_length(split_message.first().unwrap());
+    let mut message_iter: Iter<'_, &str> = split_message.iter();
+    
+    let length: usize =  parse_length(message_iter.next().unwrap());
 
     if length != ((split_message.len() - 1) / 2) {
         return Err(RequestError::InvalidRequest(error_message("Invalid array length")));
     }
     
-    Ok(simple_string("OK"))
+    let command = split_pair(&mut message_iter)?;
+
+    match command.to_lowercase().as_str() {
+        "ping" => Ok(simple_string("PONG")),
+        "echo" => {
+            let message_to_echo = split_pair( &mut message_iter)?;
+            Ok(simple_string(&message_to_echo))
+        },
+        _ => Err(RequestError::InvalidRequest(format!("Command {} not found", command).to_string()))
+    }   
 }
 
-fn split_pair(pair_to_split: &str) {
-    let symbol = pair_to_split.chars().nth(0).unwrap_or_default();
-    let number_to_parse = pair_to_split.get(1..).unwrap();
+fn split_pair(split_message_iter: &mut Iter<'_, &str>) -> Result<String, RequestError> {
+    let command_length: usize = parse_length(split_message_iter.next().unwrap());
+    let command: &str = split_message_iter.next().unwrap();
 
-
+    if command_length != command.len() {
+        return Err(RequestError::InvalidRequest(error_message("Invalid bulk string length")))
+    }
+    Ok(String::from(command))
 }
 
 #[cfg(test)]
@@ -104,10 +119,10 @@ mod tests {
 
     #[test]
     fn parse_array_length_tests() {
-        assert_eq!(parse_array_length("*4"), 4);
-        assert_eq!(parse_array_length("*15"), 15);
-        assert_eq!(parse_array_length("*100"), 100);
-        assert_eq!(parse_array_length("*-1"), 0);
+        assert_eq!(parse_length("*4"), 4);
+        assert_eq!(parse_length("*15"), 15);
+        assert_eq!(parse_length("*100"), 100);
+        assert_eq!(parse_length("*-1"), 0);
     }
 
     #[test]
@@ -123,7 +138,23 @@ mod tests {
     }
 
     #[test]
-    fn process_message_test() {
-        assert_eq!(process_message("*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n"), Ok("+OK\r\n".to_string()));
+    fn process_message_echo_test() {
+        assert_eq!(process_message("*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n"), Ok("+hello world\r\n".to_string()));
+        assert_eq!(process_message("*2\r\n$4\r\necho\r\n$19\r\nhello !@#$%^& world\r\n"), Ok("+hello !@#$%^& world\r\n".to_string()));
+    }
+
+    #[test]
+    fn process_message_ping_test() {
+        assert_eq!(process_message("*1\r\n$4\r\nping\r\n"), Ok("+PONG\r\n".to_string()));
+    }
+
+    #[test]
+    fn process_invalid_bulk_string() {
+        assert_eq!(process_message("*2\r\n$3\r\necho\r\n$11\r\nhello world\r\n"), Err(RequestError::InvalidRequest("-Invalid bulk string length\r\n".to_string())))
+    }
+
+    #[test]
+    fn process_message_command_not_found() {
+
     }
 }
