@@ -1,4 +1,4 @@
-use std::{slice::Iter, thread};
+use std::slice::Iter;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use dashmap::DashMap;
@@ -17,39 +17,53 @@ enum RequestError {
 
 #[tokio::main]
 async fn main() {
-    // Bind the listener to port 6379
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
     println!("Listening on port 6379...");
 
     loop {
-        // Accept incoming connections
         let (mut socket, addr) = listener.accept().await.unwrap();
         println!("Accepted connection from: {:?}", addr);
 
         tokio::spawn(async move {
             let mut buffer = [0; 1024];
 
-            // Read data from the socket
-            match socket.read(&mut buffer).await {
-                Ok(n) if n == 0 => return, // connection closed
-                Ok(n) => {
-                    // Convert the buffer into a string 
-                    let message = String::from_utf8_lossy(&buffer[0..n]);
-                    println!("{}", message);
-                    // Process the message
-                    let _response = process_message(&message);
-                    // let _response = "+OK\r\n";
-                
-
-                    if let Err(e) = socket.write_all(&buffer[0..n]).await {
-                        println!("Failed to write to socket; err = {:?}", e);
+            loop {
+                match socket.read(&mut buffer).await {
+                    Ok(0) => {
+                        println!("Connection closed by client: {:?}", addr);
+                        return;
                     }
-                }
-                Err(e) => {
-                    println!("Failed to read from socket; err = {:?}", e);
+                    Ok(n) => {
+                        let message = String::from_utf8_lossy(&buffer[0..n]);
+
+                        println!("Received message: {}", message);
+
+                        let response = match process_message(&message) {
+                            Ok(success_message) => success_message,
+                            Err(e) => get_error_message(&e).to_string(),
+                        };
+
+                        println!("Sending response: {}", response);
+
+                        if let Err(e) = socket.write_all(response.as_bytes()).await {
+                            println!("Failed to write to socket; err = {:?}", e);
+                            return; // Close connection on write error
+                        }
+                    }
+                    Err(e) => {
+                        println!("Failed to read from socket; err = {:?}", e);
+                        return; // Close connection on read error
+                    }
                 }
             }
         });
+    }
+}
+
+fn get_error_message(error: &RequestError) -> String {
+    match error {
+        RequestError::InvalidRequest(ref message) => format!("-{}\r\n", message),
+        RequestError::KeyNotFound(ref key) => format!("-Error Key not found: {}\r\n", key),
     }
 }
 
@@ -58,7 +72,7 @@ fn simple_string(value: &str) -> String {
 }
 
 fn error_message(value: &str) -> String {
-    base_message('-',value, DELIMITER)
+    base_message('-', value, DELIMITER)
 }
 
 fn base_message(first_char: char, value: &str, delim: &str) -> String {
@@ -68,28 +82,26 @@ fn base_message(first_char: char, value: &str, delim: &str) -> String {
 fn parse_length(encoded: &str) -> usize {
     encoded[1..].parse::<usize>().unwrap_or_default()
 }
-// "*2\r\n$4\r\necho\r\n$11\r\nhello world\r\n”
-// "*2\r\n$3\r\nget\r\n$3\r\nkey\r\n”
 
 fn process_message(main_message: &str) -> Result<String, RequestError> {
     if !main_message.starts_with('*') {
-        return Err(RequestError::InvalidRequest(error_message("Invalid message format")));
+        return Err(RequestError::InvalidRequest("Invalid message format".to_string()));
     }
+
     let split_message: Vec<&str> = main_message.split(DELIMITER).collect();
     let mut message_iter: Iter<'_, &str> = split_message.iter();
-    
-    let length: usize =  parse_length(message_iter.next().unwrap());
 
+    let length: usize = parse_length(message_iter.next().unwrap());
     if length != ((split_message.len() - 1) / 2) {
-        return Err(RequestError::InvalidRequest(error_message("Invalid array length")));
+        return Err(RequestError::InvalidRequest("Invalid array length".to_string()));
     }
-    
+
     let command = split_pair(&mut message_iter)?;
 
     match command.to_lowercase().as_str() {
         "ping" => Ok(simple_string("PONG")),
         "echo" => {
-            let message_to_echo = split_pair( &mut message_iter)?;
+            let message_to_echo = split_pair(&mut message_iter)?;
             Ok(simple_string(&message_to_echo))
         },
         "set" => {
@@ -102,13 +114,13 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
             let key = split_pair(&mut message_iter)?;
             if let Some(found_value) = GLOBAL_MAP.get(key.as_str()) {
                 Ok(simple_string(&found_value))
+            } else {
+                Err(RequestError::KeyNotFound(key))
             }
-            else {
-                Err(RequestError::KeyNotFound(error_message(&format!("{} not found", key))))
-            }
-        }
-        _ => Err(RequestError::InvalidRequest(error_message(&format!("Command {} not found", command).to_string())))
-    }   
+        },
+        "command" => Ok(simple_string(OK)),
+        _ => Err(RequestError::InvalidRequest(format!("Command {} not found", command))),
+    }
 }
 
 fn split_pair(split_message_iter: &mut Iter<'_, &str>) -> Result<String, RequestError> {
@@ -116,10 +128,11 @@ fn split_pair(split_message_iter: &mut Iter<'_, &str>) -> Result<String, Request
     let command: &str = split_message_iter.next().unwrap();
 
     if command_length != command.len() {
-        return Err(RequestError::InvalidRequest(error_message("Invalid bulk string length")))
+        return Err(RequestError::InvalidRequest("Invalid bulk string length".to_string()))
     }
     Ok(String::from(command))
 }
+
 
 #[cfg(test)]
 mod tests {
