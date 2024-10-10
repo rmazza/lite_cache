@@ -1,16 +1,21 @@
+mod commands;
+mod utils;
+
 use std::slice::Iter;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use commands::set::SetCommand;
+use utils::UtilityStruct;
 
-const DELIMITER: &str = "\r\n";
+pub const DELIMITER: &str = "\r\n";
 const OK: &str = "OK";
 
 static GLOBAL_MAP: Lazy<DashMap<String, String>> = Lazy::new(DashMap::new);
 
 #[derive(Debug, PartialEq)]
-enum RequestError {
+pub enum RequestError {
     InvalidRequest(String),
     KeyNotFound(String),
 }
@@ -67,96 +72,48 @@ fn get_error_message(error: &RequestError) -> String {
     }
 }
 
-fn simple_string(value: &str) -> String {
-    base_message('+', value, DELIMITER)
-}
-
-fn error_message(value: &str) -> String {
-    base_message('-', value, DELIMITER)
-}
-
-fn base_message(first_char: char, value: &str, delim: &str) -> String {
-    format!("{}{}{}", first_char, value, delim)
-}
-
-fn parse_length(encoded: &str) -> usize {
-    encoded[1..].parse::<usize>().unwrap_or_default()
-}
-
 fn process_message(main_message: &str) -> Result<String, RequestError> {
     if !main_message.starts_with('*') {
-        return Err(RequestError::InvalidRequest("Invalid message format".to_string()));
+        return Err(RequestError::InvalidRequest(UtilityStruct::error_message("Invalid message format")));
     }
 
     let split_message: Vec<&str> = main_message.split(DELIMITER).collect();
     let mut message_iter: Iter<'_, &str> = split_message.iter();
 
-    let length: usize = parse_length(message_iter.next().unwrap());
+    let length: usize = UtilityStruct::parse_length(message_iter.next().unwrap());
     if length != ((split_message.len() - 1) / 2) {
-        return Err(RequestError::InvalidRequest("Invalid array length".to_string()));
+        return Err(RequestError::InvalidRequest(UtilityStruct::error_message("Invalid array length")));
     }
 
-    let command = split_pair(&mut message_iter)?;
+    let command = UtilityStruct::split_pair(&mut message_iter)?;
 
     match command.to_lowercase().as_str() {
-        "ping" => Ok(simple_string("PONG")),
+        "ping" => Ok(UtilityStruct::simple_string("PONG")),
         "echo" => {
-            let message_to_echo = split_pair(&mut message_iter)?;
-            Ok(simple_string(&message_to_echo))
+            let message_to_echo = UtilityStruct::split_pair(&mut message_iter)?;
+            Ok(UtilityStruct::simple_string(&message_to_echo))
         },
         "set" => {
-            let key = split_pair(&mut message_iter)?;
-            let value = split_pair(&mut message_iter)?;
-            GLOBAL_MAP.insert(key, value);
-            Ok(simple_string(OK))
+            let set_command: SetCommand = SetCommand::new(UtilityStruct::split_pair(&mut message_iter)?, UtilityStruct::split_pair(&mut message_iter)?);
+            GLOBAL_MAP.insert(set_command.key, set_command.value);
+            Ok(UtilityStruct::simple_string(OK))
         },
         "get" => {
-            let key = split_pair(&mut message_iter)?;
+            let key = UtilityStruct::split_pair(&mut message_iter)?;
             if let Some(found_value) = GLOBAL_MAP.get(key.as_str()) {
-                Ok(simple_string(&found_value))
+                Ok(UtilityStruct::simple_string(&found_value))
             } else {
                 Err(RequestError::KeyNotFound(key))
             }
-        },
-        "command" => Ok(simple_string(OK)),
-        _ => Err(RequestError::InvalidRequest(format!("Command {} not found", command))),
+        }, 
+        "command" => Ok( UtilityStruct::simple_string(OK)),
+        _ => Err(RequestError::InvalidRequest(UtilityStruct::error_message(&format!("Command {} not found", command)))),
     }
 }
-
-fn split_pair(split_message_iter: &mut Iter<'_, &str>) -> Result<String, RequestError> {
-    let command_length: usize = parse_length(split_message_iter.next().unwrap());
-    let command: &str = split_message_iter.next().unwrap();
-
-    if command_length != command.len() {
-        return Err(RequestError::InvalidRequest("Invalid bulk string length".to_string()))
-    }
-    Ok(String::from(command))
-}
-
 
 #[cfg(test)]
-mod tests {
+mod main_tests {
     use crate::*;
-
-    #[test]
-    fn simple_string_tests() {
-        assert_eq!(simple_string("OK"), "+OK\r\n");
-        assert_eq!(simple_string("Hello World"), "+Hello World\r\n");
-    }
-
-    #[test]
-    fn error_message_tests() {
-        assert_eq!(error_message("Error"), "-Error\r\n");
-        assert_eq!(error_message("Error message"), "-Error message\r\n");
-    }
-
-    #[test]
-    fn parse_array_length_tests() {
-        assert_eq!(parse_length("*4"), 4);
-        assert_eq!(parse_length("*15"), 15);
-        assert_eq!(parse_length("*100"), 100);
-        assert_eq!(parse_length("*-1"), 0);
-    }
 
     #[test]
     fn process_message_starts_with_tests() {
