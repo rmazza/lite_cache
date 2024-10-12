@@ -1,6 +1,7 @@
 mod commands;
 mod utils;
 
+use std::iter::Peekable;
 use std::slice::Iter;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,14 +42,14 @@ async fn main() {
                     Ok(n) => {
                         let message = String::from_utf8_lossy(&buffer[0..n]);
 
-                        println!("Received message: {}", message);
+                        // println!("Received message: {}", message);
 
                         let response = match process_message(&message) {
                             Ok(success_message) => success_message,
                             Err(e) => get_error_message(&e).to_string(),
                         };
 
-                        println!("Sending response: {}", response);
+                        // println!("Sending response: {}", response);
 
                         if let Err(e) = socket.write_all(response.as_bytes()).await {
                             println!("Failed to write to socket; err = {:?}", e);
@@ -78,7 +79,7 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
     }
 
     let split_message: Vec<&str> = main_message.split(DELIMITER).collect();
-    let mut message_iter: Iter<'_, &str> = split_message.iter();
+    let mut message_iter: Peekable<Iter<'_, &str>> = split_message.iter().peekable();
 
     let length: usize = UtilityStruct::parse_length(message_iter.next().unwrap());
     if length != ((split_message.len() - 1) / 2) {
@@ -94,8 +95,25 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
             Ok(UtilityStruct::simple_string(&message_to_echo))
         },
         "set" => {
-            let set_command: SetCommand = SetCommand::new(UtilityStruct::split_pair(&mut message_iter)?, UtilityStruct::split_pair(&mut message_iter)?);
-            GLOBAL_MAP.insert(set_command.key, set_command.value);
+            let mut insert: bool = false;
+
+            let set_command: SetCommand = SetCommand::new(&mut message_iter);
+
+            if set_command.xx && set_command.nx {
+                return Ok(UtilityStruct::null())
+            }
+
+            if set_command.nx && !GLOBAL_MAP.contains_key(&set_command.key) {
+                insert = true;
+            }
+
+            if set_command.xx && GLOBAL_MAP.contains_key(&set_command.key) {
+                insert = true;
+            }
+
+            if insert {
+                GLOBAL_MAP.insert(set_command.key, set_command.value);
+            }
             Ok(UtilityStruct::simple_string(OK))
         },
         "get" => {
@@ -103,7 +121,7 @@ fn process_message(main_message: &str) -> Result<String, RequestError> {
             if let Some(found_value) = GLOBAL_MAP.get(key.as_str()) {
                 Ok(UtilityStruct::simple_string(&found_value))
             } else {
-                Err(RequestError::KeyNotFound(key))
+                Ok(UtilityStruct::null())
             }
         }, 
         "command" => Ok( UtilityStruct::simple_string(OK)),

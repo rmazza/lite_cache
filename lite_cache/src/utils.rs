@@ -1,3 +1,4 @@
+use std::iter::Peekable;
 use std::slice::Iter;
 
 use crate::RequestError;
@@ -6,7 +7,7 @@ use crate::DELIMITER;
 pub struct UtilityStruct;
 
 impl UtilityStruct {
-    pub fn split_pair(split_message_iter: &mut Iter<'_, &str>) -> Result<String, RequestError> {
+    pub fn split_pair(split_message_iter: &mut Peekable<Iter<'_, &str>>) -> Result<String, RequestError> {
         let command_length: usize = UtilityStruct::parse_length(split_message_iter.next().unwrap());
         let command: &str = split_message_iter.next().unwrap();
     
@@ -14,6 +15,10 @@ impl UtilityStruct {
             return Err(RequestError::InvalidRequest(UtilityStruct::error_message("Invalid bulk string length")))
         }
         Ok(String::from(command))
+    }
+
+    pub fn null() -> String {
+        format!("_{}", DELIMITER)
     }
     
     pub fn parse_length(encoded: &str) -> usize {
